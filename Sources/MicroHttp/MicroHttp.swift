@@ -47,16 +47,24 @@ public let metrics: Middleware = { req, res, ctx in
         switch r {
         case .success:
             Counter(label: "http_requests_total", dimensions: [
-                ( "route", req.header.uri ),
+                ( "route", req.header.path ),
                 ("method", req.header.method.rawValue),
                 ("status", "\(res.status.code)") ]).increment()
         case .failure:
             Counter(label: "http_requests_total", dimensions: [
-                ( "route", req.header.uri ),
+                ( "route", req.header.path ),
                 ("method", req.header.method.rawValue),
                 ("status", "error") ]).increment()
         }
     }
     
     ctx.next()
+}
+
+
+extension HTTPRequestHead {
+    var path: String {
+        guard let idx = self.uri.firstIndex(of: "?") else { return self.uri }
+        return String(self.uri[self.uri.startIndex..<idx])
+    }
 }
