@@ -1,6 +1,6 @@
 
 import CoreMetrics
-
+import Cmetrics
 import NIOConcurrencyHelpers
 
 /// `PrometheusClient` is a metrics backend for `SwiftMetrics`, designed to integrate applications with observability servers that support `statsd` protocol.
@@ -21,19 +21,36 @@ public final class PrometheusMetrics: MetricsFactory {
        
     }
     
+    private let cpu_info = cpu_info_new()
+    
+    deinit {
+        cpu_info_free(self.cpu_info)
+    }
+    
     public func export() -> String {
         
         var counters  : [PrometheusUtils.Id: PrometheusCounter]!
         var recorders : [PrometheusUtils.Id: PrometheusRecorder]!
         var timers    : [PrometheusUtils.Id: PrometheusTimer]!
         
+        
+        var cpu : Double = 0
+        
         self.lock.withLockVoid {
             counters = self.counters
             recorders = self.recorders
             timers = self.timers
+            
+            cpu = cpu_info_get_current_usage(self.cpu_info)
         }
         
         var result = ""
+        
+        let mem = getCurrentRSS()
+        result.append("process_resident_memory_bytes \(mem)\n")
+        result.append("process_cpu_used_ratio \(cpu)\n")
+        
+        
         for (id, counter) in counters {
             result.append("\(id.prometheusRepresentation) \(counter.value.load())\n")
         }

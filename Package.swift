@@ -27,7 +27,10 @@ let package = Package(
             dependencies: ["NIO", "NIOHTTP1" , "Logging", "NIOExtras", "Metrics", ]),
         .target(
             name: "Prometheus",
-            dependencies: ["CoreMetrics", "NIO", ]),
+            dependencies: ["CoreMetrics", "NIO", "Cmetrics" ]),
+        .target(
+            name: "Cmetrics",
+            dependencies: []),
         .target(
             name: "MicroHttpExample",
             dependencies: ["MicroHttp", "Prometheus", "NIO", "Logging", "Metrics"]),
