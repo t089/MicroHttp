@@ -10,6 +10,9 @@ let package = Package(
         .library(
             name: "MicroHttp",
             targets: ["MicroHttp"]),
+        .library(
+            name: "Prometheus",
+            targets: ["Prometheus"]),
     ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
