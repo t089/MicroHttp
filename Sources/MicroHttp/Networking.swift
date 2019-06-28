@@ -7,6 +7,7 @@
 
 import NIO
 import NIOHTTP1
+import Metrics
 
 
 public final class IncommingMessage {
@@ -353,7 +354,6 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
     
     private(set) weak var router: Router!
     
-    
     init(router: Router) {
         self.router = router
     }
@@ -424,7 +424,6 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
             self.mayRead = true
             
             let request = IncommingMessage(header: head, body: BodyStream(eventLoop: context.eventLoop, buffer: context.channel.allocator.buffer(capacity: 4096), channelRead: { [unowned self, unowned context] in
-                //guard let self = self, let context = context else { return }
                 self.mayRead = true
                 if self.pendingRead {
                     context.read()

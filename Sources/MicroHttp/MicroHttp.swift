@@ -1,5 +1,6 @@
 import NIO
 import NIOHTTP1
+import Metrics
 
 open class MicroApp: Router {
     public let group: EventLoopGroup
@@ -9,7 +10,7 @@ open class MicroApp: Router {
         self.group = group
     }
     
-	open func listen(host: String, port: Int, backlog: CInt = 256) {
+    open func listen(host: String, port: Int, backlog: CInt = 256) {
 		let bootstrap = ServerBootstrap(group: self.group)
 	    // Specify backlog and enable SO_REUSEADDR for the server itself
 	    .serverChannelOption(ChannelOptions.backlog, value: backlog)
@@ -38,4 +39,24 @@ open class MicroApp: Router {
 			fatalError("Failed to start server: \(error)")
 		}
 	}
+}
+
+
+public let metrics: Middleware = { req, res, ctx in
+    res.whenComplete { r in
+        switch r {
+        case .success:
+            Counter(label: "http_requests_total", dimensions: [
+                ( "route", req.header.uri ),
+                ("method", req.header.method.rawValue),
+                ("status", "\(res.status.code)") ]).increment()
+        case .failure:
+            Counter(label: "http_requests_total", dimensions: [
+                ( "route", req.header.uri ),
+                ("method", req.header.method.rawValue),
+                ("status", "error") ]).increment()
+        }
+    }
+    
+    ctx.next()
 }
