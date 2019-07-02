@@ -404,6 +404,7 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
     }
     
     private var state = State.idle
+    private var buffer = ByteBufferAllocator().buffer(capacity: 4096 * 1024)
     
     private weak var request: IncommingMessage!
     
@@ -422,8 +423,9 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
         switch reqPart {
         case .head(let head):
             self.mayRead = true
+            self.buffer.clear()
             
-            let request = IncommingMessage(header: head, body: BodyStream(eventLoop: context.eventLoop, buffer: context.channel.allocator.buffer(capacity: 4096), channelRead: { [unowned self, unowned context] in
+            let request = IncommingMessage(header: head, body: BodyStream(eventLoop: context.eventLoop, buffer: self.buffer, channelRead: { [unowned self, unowned context] in
                 self.mayRead = true
                 if self.pendingRead {
                     context.read()
@@ -475,12 +477,14 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
         self.state = .idle
         self.mayRead = true
         self.request = nil
+        self.buffer.clear()
     }
     
     func channelInactive(context: ChannelHandlerContext) {
         // print("Channel inactive")
         self.state = .idle
         self.request = nil
+        self.buffer.clear()
     }
     
 }
