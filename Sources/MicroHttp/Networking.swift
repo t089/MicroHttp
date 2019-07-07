@@ -9,14 +9,13 @@ import NIO
 import NIOHTTP1
 import Metrics
 
-
 public final class IncommingMessage {
     public let header: HTTPRequestHead
     public var userInfo: [String: Any] = [:]
     
-    public var body: BodyStream
+    public let body: ByteBuffer
     
-    init(header: HTTPRequestHead, body: BodyStream) {
+    init(header: HTTPRequestHead, body: ByteBuffer) {
         self.header = header
         self.body = body
     }
@@ -352,7 +351,7 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
     public typealias OutboundOut = HTTPServerResponsePart
     typealias OutboundIn = HTTPServerResponsePart
     
-    private(set) weak var router: Router!
+    private(set) var router: Router
     
     init(router: Router) {
         self.router = router
@@ -403,68 +402,41 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
         
     }
     
-    private var state = State.idle
     private var buffer = ByteBufferAllocator().buffer(capacity: 4096 * 1024)
-    
-    private weak var request: IncommingMessage!
-    
-    func read(context: ChannelHandlerContext) {
-        if self.mayRead {
-            self.pendingRead = false
-            context.read()
-        } else {
-            self.pendingRead = true
-        }
-    }
+    private var head: HTTPRequestHead!
+    private var start: NIODeadline = .now()
+   
     
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let reqPart = self.unwrapInboundIn(data)
         
         switch reqPart {
         case .head(let head):
-            self.mayRead = true
+//            self.start = .now()
             self.buffer.clear()
+            self.head = head
+        case .body(var body):
+            self.buffer.writeBuffer(&body)
+        case .end(_):
+            let req = IncommingMessage(header: self.head, body: self.buffer)
+            let res = ServerResponse(channel: context.channel)
             
-            let request = IncommingMessage(header: head, body: BodyStream(eventLoop: context.eventLoop, buffer: self.buffer, channelRead: { [unowned self, unowned context] in
-                self.mayRead = true
-                if self.pendingRead {
-                    context.read()
-                }
-            }))
-            
-            self.request = request
-            let response = ServerResponse(channel: context.channel)
-            
-            self.state = .head(response, bodyConsumed: false, responseSent: false)
-            
-            self.router.handle(error: nil, request: self.request, response: response, context: Context(eventLoop: context.eventLoop, next: { (error) in
+            self.router.handle(error: nil, request: req, response: res, context: .init(eventLoop: context.eventLoop, next: { (error) in
                 if let error = error {
-                    response.status = .internalServerError
+                    res.status = .internalServerError
                     let msg = "unhandled error: \(error)"
-                    response.send(msg).end()
+                    res.send(msg).end()
                     // print(msg)
                 } else {
-                    response.status = .notFound
-                    response.send("No middleware handled the request.").end()
+                    res.status = .notFound
+                    res.send("No middleware handled the request.").end()
                 }
             }))
             
-            response.whenComplete { (_) in
-                self.state.responseComplete()
-                self.request?.body.consumer = nil
-                self.request = nil
-            }
-            
-            
-        case .body(let body):
-            self.state.readBody()
-            self.mayRead = true // the consumer of the stream signals when the next chunk should be read
-            self.request?.body.send0(.part(body))
-        case .end(_):
-            self.state.bodyConsumed()
-            self.request?.body.send0(.finished)
-            
-            self.mayRead = true
+//            res.whenComplete { (_) in
+//                let elapsed = NIODeadline.now() - self.start
+//                print("\(req.header.method.rawValue) \(req.header.uri) - \(res.status.code) - \(Double(elapsed.nanoseconds) / 1e9)")
+//            }
         }
     }
     
@@ -473,18 +445,14 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
     }
     
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        self.request?.body.send0(.failure(error))
-        self.state = .idle
-        self.mayRead = true
-        self.request = nil
         self.buffer.clear()
+        self.head = nil
     }
     
     func channelInactive(context: ChannelHandlerContext) {
         // print("Channel inactive")
-        self.state = .idle
-        self.request = nil
         self.buffer.clear()
+        self.head = nil
     }
     
 }
