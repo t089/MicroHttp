@@ -27,7 +27,7 @@ let package = Package(
         // Targets can depend on other targets in this package, and on products in packages which this package depends on.
         .target(
             name: "MicroHttp",
-            dependencies: ["NIO", "NIOHTTP1" , "Logging", "NIOExtras", "Metrics", ]),
+            dependencies: ["NIO", "NIOHTTP1" , "Logging", "NIOExtras", "Metrics" ]),
         .target(
             name: "Prometheus",
             dependencies: ["CoreMetrics", "NIO", "Cmetrics" ]),

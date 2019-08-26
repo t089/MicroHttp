@@ -1,21 +1,31 @@
 import NIO
 import NIOHTTP1
 import Metrics
+import NIOExtras
+import Foundation
 
 open class MicroApp: Router {
     public let group: EventLoopGroup
-	public private(set) var serverChannel: Channel!
+	
+    private var serverChannel: Channel!
+    private var quiesce: ServerQuiescingHelper?
+    private var fullyShutdownPromise: EventLoopPromise<Void>?
+    
+    public var fullySutdownFuture: EventLoopFuture<Void>? { return self.fullyShutdownPromise?.futureResult }
     
     public init(group: EventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)) {
         self.group = group
     }
     
     open func listen(host: String, port: Int, backlog: CInt = 256) {
+        self.quiesce = ServerQuiescingHelper(group: self.group)
 		let bootstrap = ServerBootstrap(group: self.group)
 	    // Specify backlog and enable SO_REUSEADDR for the server itself
 	    .serverChannelOption(ChannelOptions.backlog, value: backlog)
 	    .serverChannelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
-	    
+            .serverChannelInitializer({ (channel) -> EventLoopFuture<Void> in
+                channel.pipeline.addHandler(self.quiesce!.makeServerChannelHandler(channel: channel))
+            })
 	    // Set the handlers that are applied to the accepted Channels
 	    .childChannelInitializer { channel in
 	        /* channel.pipeline.addHandler(DebugOutboundEventsHandler())
@@ -35,10 +45,41 @@ open class MicroApp: Router {
 			let channel = try bootstrap.bind(host:host, port: port).wait()
 			self.serverChannel = channel
 			print("Server listening on: \(channel.localAddress!)")
+            self.fullyShutdownPromise = self.group.next().makePromise(of: Void.self)
+            self.installSignalHandler(quiesce: self.quiesce!)
 		} catch {
 			fatalError("Failed to start server: \(error)")
 		}
 	}
+    
+    public func shutdown() {
+        self.quiesce?.initiateShutdown(promise: self.fullyShutdownPromise)
+    }
+    
+    let signalQueue = DispatchQueue(label: "MicroHttp.SignalHandlingQueue")
+    
+    private func installSignalHandler(quiesce: ServerQuiescingHelper) {
+        let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: self.signalQueue)
+        signalSource.setEventHandler {
+            signalSource.cancel()
+            print("\nShutting down...")
+            quiesce.initiateShutdown(promise: self.fullyShutdownPromise)
+            self.installForceShutdownSignalHandler()
+        }
+        signal(SIGINT, SIG_IGN)
+        signalSource.resume()
+    }
+    
+    private func installForceShutdownSignalHandler() {
+        let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: self.signalQueue)
+        signalSource.setEventHandler {
+            signalSource.cancel()
+            print("\nExiting.")
+            exit(0)
+        }
+        signal(SIGINT, SIG_IGN)
+        signalSource.resume()
+    }
 }
 
 
