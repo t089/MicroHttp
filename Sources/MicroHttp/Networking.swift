@@ -75,6 +75,11 @@ public final class ServerResponse {
         return self
     }
     
+    public func send() -> Self {
+        self.flushHeaders()
+        return self
+    }
+    
     public func end(_ trailing: HTTPHeaders? = nil, promise: EventLoopPromise<Void>? = nil) {
         self.channel.writeAndFlush(HTTPServerResponsePart.end(trailing), promise: self.complete)
         self.complete.futureResult.cascade(to: promise)
@@ -88,12 +93,11 @@ public final class ServerResponse {
         return self
     }
     
-    public func send<Bytes: Sequence>(_ data: Bytes) -> ServerResponse where Bytes.Element == UInt8  {
+    public func send<Bytes: Sequence>(_ data: Bytes, promise: EventLoopPromise<Void>? = nil) -> ServerResponse where Bytes.Element == UInt8  {
         self.flushHeaders()
         var buffer = self.channel.allocator.buffer(capacity: data.underestimatedCount)
         buffer.writeBytes(data)
-        self.channel.writeAndFlush(HTTPServerResponsePart.body(.byteBuffer(buffer)), promise: nil)
-        self.didSendHeaders = false
+        self.channel.writeAndFlush(HTTPServerResponsePart.body(.byteBuffer(buffer)), promise: promise)
         return self
     }
 }
