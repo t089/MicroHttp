@@ -2,14 +2,18 @@ import NIO
 import MicroHttp
 import Prometheus
 import Metrics
+import NIOSSL
+import Logging
 
 let prometheus = PrometheusMetrics()
 
+LoggingSystem.bootstrap(StreamLogHandler.standardError)
 MetricsSystem.bootstrap(prometheus)
 
 let app = MicroApp()
 
 app.use(metrics)
+app.use(logger(.debug))
 
 app.get("/hello") { (_, res, ctx) in
     res.status(.ok).send("Hello").end()
@@ -26,15 +30,32 @@ app.get("/long") { (_, res, ctx) in
 }
 
 app.post("/bin") { (req, res, ctx) in
-    req.body.consume().whenSuccess({ (body) in
+    let body = req.body.consume()
+    
+    body.whenSuccess({ (body) in
         res.status(.ok).send("got \(body.readableBytes) bytes.\n").end()
     })
+    
+    body.whenFailure { (error) in
+        res.status(.payloadTooLarge).send("Body too large").end()
+    }
 }
 
 app.get("/metrics") { (_, res, ctx) in
     res.send(prometheus.export()).end()
 }
 
-app.listen(host: "localhost", port: 0)
+let certificateChain = try! NIOSSLCertificate.fromPEMFile("/Users/tobias/Developing/swift-maps/cert.pem")
+let sslContext = try! NIOSSLContext(configuration: TLSConfiguration.forServer(certificateChain: certificateChain.map { .certificate($0) }, privateKey: .file("/Users/tobias/Developing/swift-maps/key.pem")))
+
+
+let otherDomain = Router()
+otherDomain.get("/hello") { (_, res, ctx) in
+    res.status = .ok
+    res.send("Hello from other domain.").end()
+}
+
+
+app.listen(host: "::1", port: 8080)
 
 try? app.fullySutdownFuture?.wait()

@@ -9,31 +9,99 @@ import NIO
 import NIOHTTP1
 import Metrics
 
+public enum BodyStreamResult {
+    case buffer(ByteBuffer)
+    case end
+    case error(Error)
+}
+
+final class BodyStream {
+    typealias Handler = (BodyStreamResult, EventLoopPromise<Void>?) -> ()
+    private(set) var  isClosed : Bool
+    
+    let eventLoop: EventLoop
+    
+    private var buffer: [(BodyStreamResult, EventLoopPromise<Void>?)]
+    private var handler: Handler?
+    
+    init(eventLoop: EventLoop) {
+        self.buffer = []
+        self.isClosed = false
+        self.eventLoop = eventLoop
+    }
+    
+    func read(_ handler: @escaping Handler) {
+        self.handler = handler
+        for (result, promise) in self.buffer {
+            handler(result, promise)
+        }
+        self.buffer = []
+    }
+    
+    func write(part: BodyStreamResult, promise: EventLoopPromise<Void>?) {
+        if case .end = part {
+            self.isClosed = true
+        }
+        
+        if let handler = self.handler {
+            handler(part, promise)
+        } else {
+            self.buffer.append((part, promise))
+        }
+    }
+    
+    func write(part: BodyStreamResult) -> EventLoopFuture<Void> {
+        let p = self.eventLoop.makePromise(of: Void.self)
+        self.write(part: part, promise: p)
+        return p.futureResult
+    }
+}
+
+
+
 public final class IncommingMessage {
     public let header: HTTPRequestHead
     public var userInfo: [String: Any] = [:]
     
-    public let body: Body
+    let bodyStream: BodyStream
     
-    init(header: HTTPRequestHead, body: Body) {
+    init(header: HTTPRequestHead, bodyStream: BodyStream) {
         self.header = header
-        self.body = body
+        self.bodyStream = bodyStream
     }
     
-    public final class Body {
-        var buffer: ByteBuffer
+    public var body: Body {
+        return Body(msg: self)
+    }
+    
+    public struct Body {
+        let msg: IncommingMessage
         
-        let bodyCompletePromise: EventLoopPromise<Void>
+        struct BodyTooLargeError: Error {}
         
-        init(buffer: ByteBuffer, bodyCompletePromise: EventLoopPromise<Void>) {
-            self.buffer = buffer
-            self.bodyCompletePromise = bodyCompletePromise
-        }
-        
-        public func consume() -> EventLoopFuture<ByteBuffer> {
-            return self.bodyCompletePromise.futureResult.map {
-                return self.buffer
+        public func consume(limit: UInt32 = 1_024 * 1_024 * 2) -> EventLoopFuture<ByteBuffer> {
+            let contentLength = self.msg.header.headers["content-length"].first.flatMap(UInt32.init) ?? limit
+            var buffer = ByteBufferAllocator().buffer(capacity: Int(min(contentLength, limit)))
+            let p = self.msg.bodyStream.eventLoop.makePromise(of: ByteBuffer.self)
+            self.msg.bodyStream.read { (res, rp) in
+                switch res {
+                case .buffer(var part):
+                    guard (part.readableBytes + buffer.readableBytes <= limit) else {
+                        rp?.fail(BodyTooLargeError())
+                        p.fail(BodyTooLargeError())
+                        return
+                    }
+                    buffer.writeBuffer(&part)
+                    rp?.succeed(())
+                case .end:
+                    p.succeed(buffer)
+                    rp?.succeed(())
+                case .error(let err):
+                    p.fail(err)
+                    rp?.fail(err)
+                }
             }
+            return p.futureResult
         }
     }
 }
@@ -180,6 +248,8 @@ enum SomeMiddleware: MiddlewareProtocol {
 open class Router {
     private var middlewares: [SomeMiddleware] = []
     
+    public init() {}
+    
     open func use<Middleware: MiddlewareProtocol>(_ middleware: Middleware) {
         self.middlewares.append(.middlewareImpl(middleware))
     }
@@ -244,127 +314,7 @@ open class Router {
     }
 }
 
-public final class BodyStream {
-    public enum StreamError: Error {
-        case alreadySubscribed
-    }
-    
-    public enum Event {
-        case part(ByteBuffer)
-        case failure(Error)
-        case finished
-    }
-    
-    public let eventLoop: EventLoop
-    public typealias Consumer = (Event, @escaping () -> ()) -> ()
-    
-    private var buffer: ByteBuffer
-    
-    private let _channelRead: () -> ()
-    
-    init(eventLoop: EventLoop, buffer: ByteBuffer, channelRead: @escaping () -> ()) {
-        self.eventLoop = eventLoop
-        self._channelRead = channelRead
-        self.buffer = buffer
-    }
-    
-    var consumer: Consumer?
-    private var inputClosed: Result<Void, Error>?
-    
-    private var waitingForNextReadOfConsumer: Bool = false
-    
-    private func read() {
-        // print("consumer called read")
-        if self.eventLoop.inEventLoop {
-            self.read0()
-        } else {
-            self.eventLoop.execute {
-                self.read0()
-            }
-        }
-    }
-    
-    private func read0() {
-        precondition(self.consumer != nil)
-        // first drain the buffer
-        self.waitingForNextReadOfConsumer = false
-        
-        if self.buffer.readableBytes > 0 {
-            // print("draining read buffer")
-            let copy = self.buffer
-            self.buffer.clear()
-            self.waitingForNextReadOfConsumer = true
-            self.consumer?(.part(copy), self.read)
-        } else if let closed = self.inputClosed {
-            // print("input was already closed")
-            // if the input was already closed relay to consumer
-            switch closed {
-            case .success(_):
-                self.consumer?(.finished, { /* */ })
-            case .failure(let err):
-                self.consumer?(.failure(err), { /* */ })
-            }
-            self.consumer = nil
-        } else {
-            // print("reading from channel")
-            // read from the channel
-            self._channelRead()
-        }
-    }
-    
-    func send0(_ event: Event) {
-        // print("received event: \(event)")
-        if let consumer = self.consumer, self.waitingForNextReadOfConsumer == false {
-            // print("directly forwaring to consumer")
-            switch event {
-            case .part(let buffer):
-                self.waitingForNextReadOfConsumer = true
-                consumer(.part(buffer), self.read)
-            case .failure(let e):
-                self.inputClosed = .failure(e)
-                self.consumer = nil
-                consumer(.failure(e), { /* */})
-            case .finished:
-                self.inputClosed = .success(())
-                self.consumer = nil
-                consumer(.finished, { /* */})
-            }
-        } else {
-            // print("consumer is not ready, buffering")
-            switch event {
-            case .part(var b): self.buffer.writeBuffer(&b)
-            case .finished:
-                self.inputClosed = .success(())
-            case .failure(let e):
-                self.inputClosed = .failure(e)
-            }
-        }
-    }
-    
-    
-    
-    public func consume(_ consumer: @escaping Consumer) {
-        if self.eventLoop.inEventLoop {
-            self.consume0(consumer)
-        } else {
-            self.eventLoop.execute {
-                self.consume0(consumer)
-            }
-        }
-    }
-    
-    private func consume0(_ consumer: @escaping Consumer) {
-        assert(self.consumer == nil, "Tried to consume body more than once.")
-        guard self.consumer == nil else { _ = consumer(.failure(StreamError.alreadySubscribed), { /* */ }); return }
-        
-        // print("Start consuming body")
-        
-        self.consumer = consumer
-        
-        // start reading from buffer or socket
-        self.read0()
-    }
-}
+
 
 final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
     private var mayRead = true
@@ -429,7 +379,7 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
     private var start: NIODeadline = .now()
     
     private var request: IncommingMessage!
-    private var bodyCompletePromise: EventLoopPromise<Void>?
+    
     
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let reqPart = self.unwrapInboundIn(data)
@@ -438,9 +388,9 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
         case .head(let head):
 //            self.start = .now()
             self.buffer.clear()
-            let bodyCompletePromise = context.eventLoop.makePromise(of: Void.self)
-            self.bodyCompletePromise = bodyCompletePromise
-            let req = IncommingMessage(header: head, body: .init(buffer: self.buffer, bodyCompletePromise: bodyCompletePromise))
+            
+            let bodyStream = BodyStream(eventLoop: context.eventLoop)
+            let req = IncommingMessage(header: head, bodyStream: bodyStream)
             let res = ServerResponse(channel: context.channel)
             self.request = req
             self.router.handle(error: nil, request: req, response: res, context: .init(eventLoop: context.eventLoop, next: { (error) in
@@ -454,13 +404,33 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
                     res.send("No middleware handled the request.").end()
                 }
             }))
-        case .body(var body):
-            self.request.body.buffer.writeBuffer(&body)
+        case .body(let body):
+            self.request.bodyStream.write(part: .buffer(body), promise: nil)
         case .end(_):
-            self.request.body.bodyCompletePromise.succeed(())
+            self.request.bodyStream.write(part: .end, promise: nil)
             
             self.request = nil
-            self.bodyCompletePromise = nil
+            
+        }
+    }
+    
+    func read(context: ChannelHandlerContext) {
+        if (self.pendingWrites <= 0) {
+            context.read()
+        } else {
+            self.pendingRead = true
+        }
+    }
+    
+    private var pendingWrites = 0
+    private func write(part: BodyStreamResult, to stream: BodyStream, context: ChannelHandlerContext) {
+        self.pendingWrites += 1
+        stream.write(part: part).whenComplete { (result) in
+            self.pendingWrites -= 1
+            if (self.pendingRead == true) {
+                self.pendingRead = false
+                self.read(context: context)
+            }
         }
     }
     
@@ -470,15 +440,14 @@ final class HTTPHandler: ChannelInboundHandler , ChannelOutboundHandler {
     
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         self.buffer.clear()
+        self.request?.bodyStream.write(part: .error(error), promise: nil)
         self.request = nil
-        self.bodyCompletePromise = nil
     }
     
     func channelInactive(context: ChannelHandlerContext) {
         // print("Channel inactive")
         self.buffer.clear()
         self.request = nil
-        self.bodyCompletePromise = nil
     }
     
 }

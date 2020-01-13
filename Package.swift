@@ -18,6 +18,7 @@ let package = Package(
         // Dependencies declare other packages that this package depends on.
         // .package(url: /* package url */, from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-nio", from: "2.0.0"),
+        .package(url: "https://github.com/apple/swift-nio-ssl", from: "2.5.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-metrics.git", from: "1.0.0"),
@@ -27,7 +28,7 @@ let package = Package(
         // Targets can depend on other targets in this package, and on products in packages which this package depends on.
         .target(
             name: "MicroHttp",
-            dependencies: ["NIO", "NIOHTTP1" , "Logging", "NIOExtras", "Metrics" ]),
+            dependencies: ["NIO", "NIOHTTP1" , "NIOTLS", "NIOSSL", "Logging", "NIOExtras", "Metrics" ]),
         .target(
             name: "Prometheus",
             dependencies: ["CoreMetrics", "NIO", "Cmetrics" ]),
