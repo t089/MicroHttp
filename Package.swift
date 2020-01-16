@@ -13,6 +13,7 @@ let package = Package(
         .library(
             name: "Prometheus",
             targets: ["Prometheus"]),
+        .library(name: "JSONUtils", targets: ["JSONUtils"])
     ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
@@ -30,6 +31,9 @@ let package = Package(
             name: "MicroHttp",
             dependencies: ["NIO", "NIOHTTP1" , "NIOTLS", "NIOSSL", "Logging", "NIOExtras", "Metrics" ]),
         .target(
+            name: "JSONUtils",
+            dependencies: []),
+        .target(
             name: "Prometheus",
             dependencies: ["CoreMetrics", "NIO", "Cmetrics" ]),
         .target(
@@ -41,5 +45,8 @@ let package = Package(
         .testTarget(
             name: "MicroHttpTests",
             dependencies: ["MicroHttp"]),
+        .testTarget(
+            name: "JSONUtilsTests",
+            dependencies: ["JSONUtils"]),
     ]
 )
