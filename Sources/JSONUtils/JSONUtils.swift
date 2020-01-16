@@ -9,7 +9,67 @@ import Foundation
 
 
 
-public func mergePatch(target: Any, patch: Any) -> Any {
+public struct JSONMergePatch: CustomStringConvertible {
+    public typealias Encoder<T: Codable> = (T) throws -> Data
+    public typealias Decoder<T: Codable> = (Data) throws -> T
+    
+    public struct Codec<T: Codable> {
+        public let encode: Encoder<T>
+        public let decode: Decoder<T>
+        
+        public static func jsonEncoder(_ configure: (JSONEncoder) -> () = { _ in }) -> Encoder<T> {
+            let encoder = JSONEncoder()
+            configure(encoder)
+            return { try encoder.encode($0) }
+        }
+        
+        public static func jsonDecoder(_ configure: (JSONDecoder) -> () = { _ in }) -> Decoder<T> {
+            let decoder = JSONDecoder()
+            configure(decoder)
+            return { try decoder.decode(T.self, from: $0) }
+        }
+        
+        public init(encode: @escaping Encoder<T> = Codec<T>.jsonEncoder(), decode: @escaping Decoder<T> = Codec<T>.jsonDecoder()) {
+            self.encode = encode
+            self.decode = decode
+        }
+        
+        func toJson(_ value: T) throws -> Any {
+            let data = try encode(value)
+            return try JSONSerialization.jsonObject(with: data, options: [])
+        }
+        
+        func fromJson(_ json: Any) throws -> T {
+            let data = try JSONSerialization.data(withJSONObject: json, options: [])
+            return try decode(data)
+        }
+    }
+    
+    private let json: Any
+    
+    private init(json: Any) {
+        self.json = json
+    }
+    
+    public init(data: Data) throws {
+        self.json = try JSONSerialization.jsonObject(with: data, options: [ .allowFragments ])
+    }
+    
+    public static func from<T: Codable>(original: T, to new: T, codec: Codec<T> = Codec()) throws -> JSONMergePatch {
+        return try JSONMergePatch(json: JSONUtils.mergePatch(from: codec.toJson(original), to:  codec.toJson(new)))
+    }
+    
+    public func apply<T: Codable>(to target: T, codec: Codec<T> = Codec()) throws -> T {
+        let new = try JSONUtils.mergePatch(target: codec.toJson(target), patch: json)
+        return try codec.fromJson(new)
+    }
+    
+    public var description: String {
+        return String(decoding: try! JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted]), as: UTF8.self)
+    }
+}
+
+fileprivate func mergePatch(target: Any, patch: Any) -> Any {
     if let patch = patch as? [String: Any?] {
         var patchedTarget: [String: Any] = [:]
         if let target = target as? [String: Any] {
@@ -29,27 +89,16 @@ public func mergePatch(target: Any, patch: Any) -> Any {
     }
 }
 
-func jsonEqual(_ lhs: Any, _ rhs: Any) -> Bool {
+fileprivate func jsonEqual(_ lhs: Any, _ rhs: Any) -> Bool {
     switch (lhs, rhs) {
     case (let lhs as NSNumber, let rhs as NSNumber):
         return lhs.isEqual(to: rhs)
     case (let lhs as NSString, let rhs as NSString):
         return lhs.isEqual(to: rhs)
-    case (let lhs as NSNull, let rhs as NSNull):
+    case ( _ as NSNull,  _ as NSNull):
         return true
-    case(let lhs as NSNull, _):
-        return rhs == nil
-    case(_, let rhs as NSNull):
-        return lhs == nil
     case(let lhs as NSArray, let rhs as NSArray):
         return lhs.isEqual(to: rhs)
-//        guard lhs.count == rhs.count else { return false }
-//        for (idx, val) in lhs.enumerated() {
-//            if (jsonEqual(lhs.object(at: idx), rhs.object(at: idx)) == false) {
-//                return false
-//            }
-//        }
-//        return true
     case (let lhs as NSDictionary, let rhs as NSDictionary):
         return lhs.isEqual(to: rhs)
     default:
@@ -57,7 +106,7 @@ func jsonEqual(_ lhs: Any, _ rhs: Any) -> Bool {
     }
 }
 
-public func mergePatch(from source: Any, to target: Any) -> Any {
+fileprivate func mergePatch(from source: Any, to target: Any) -> Any {
     if let source = source as? [String: Any] {
         if let target = target as? [String: Any] {
             var patch = [String: Any?]()
@@ -65,61 +114,24 @@ public func mergePatch(from source: Any, to target: Any) -> Any {
                 if source[key] == nil {
                     patch[key] = value
                 } else if let sourceObj = source[key] as? [String: Any], let targetObj = value as? [String: Any] {
-                    patch[key]  = mergePatch(from: sourceObj, to: targetObj)
+                    let newValue = mergePatch(from: sourceObj, to: targetObj) as! [String: Any]
+                    if !newValue.isEmpty {
+                        patch[key] = newValue
+                    }
+                } else if jsonEqual(source[key] as Any, value) == false {
+                    patch[key] = value
                 }
             }
             
             let missingKeysInTarget = Set(source.keys).subtracting(target.keys)
             for missingKey in missingKeysInTarget {
-                patch[missingKey] = Optional(nil)
+                patch[missingKey] = Optional(.none)
             }
+            return patch
         } else {
             return target
         }
     } else {
         return target
-    }
-}
-
-public func asJsonString(_ json: Any) -> String {
-    return String(decoding: try! JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted]), as: UTF8.self)
-}
-
-extension Encodable {
-    public func toJson(encoder: (Self) throws -> Data = JSONEncoder().encode) -> Any {
-        let data = try! encoder(self)
-        return try! JSONSerialization.jsonObject(with: data, options: [])
-    }
-}
-
-extension Decodable {
-    public static func fromJson(_ json: Any, decoder: (Data) throws -> Self = { return try JSONDecoder().decode(Self.self, from: $0) }) throws -> Self {
-        let data = try JSONSerialization.data(withJSONObject: json, options: [])
-        return try decoder(data)
-    }
-}
-
-public protocol Patchable: Encodable, Decodable {
-    mutating func patch<JSON: Sequence>(_ patch: JSON) throws  where JSON.Element == UInt8
-    
-    func patch(from other: Self) throws -> Data
-}
-
-extension Patchable {
-    public mutating func patch<JSON: Sequence>(_ patch: JSON) throws where JSON.Element == UInt8 {
-        let patchJson = try JSONSerialization.jsonObject(with: Data(patch), options: [])
-        let patched = mergePatch(target: self.toJson(), patch: patchJson)
-        self = try Self.fromJson(patched)
-    }
-    
-    public func patch(from other: Self) throws -> Data {
-        let originalJson = other.toJson()
-        let newJson      = self.toJson()
-    }
-}
-
-extension Sequence where Element == UInt8 {
-    public var json: Any {
-        return try! JSONSerialization.jsonObject(with: Data(self), options: [])
     }
 }

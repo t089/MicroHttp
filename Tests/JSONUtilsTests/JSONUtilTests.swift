@@ -11,8 +11,8 @@ import JSONUtils
 
 import XCTest
 
-struct Entry: Codable, Patchable {
-    struct Author: Codable {
+struct Entry: Codable, Equatable {
+    struct Author: Codable, Equatable {
         var giveName: String?
         var familyName: String?
     }
@@ -24,9 +24,9 @@ struct Entry: Codable, Patchable {
 }
 
 final class JSONUtilTests: XCTestCase {
+    let givenEntry = Entry(phoneNumber: nil, title: "Goodbye!", tags: [ "example", "sample" ], content: "This will be unchanged", author: .init(giveName: "John", familyName: "Doe"))
+    
     func testExample() {
-        let givenEntry = Entry(phoneNumber: nil, title: "Goodbye!", tags: [ "example", "sample" ], content: "This will be unchanged", author: .init(giveName: "John", familyName: "Doe"))
-        
         let patch = """
             {
               "title": "Hello!",
@@ -38,10 +38,29 @@ final class JSONUtilTests: XCTestCase {
             }
             """.utf8
         
-        var patchedEntry = givenEntry
-        try! patchedEntry.patch(patch)
+        let patchedEntry = try! JSONMergePatch(data: Data(patch)).apply(to: givenEntry)
         
-        print(patchedEntry.toJson())
+        print(patchedEntry)
+    }
+    
+    func testMakePatch() throws {
+        let originalEntry = givenEntry
+        var modifiedEntry = originalEntry
+        modifiedEntry.author?.familyName = "Müller"
+        modifiedEntry.author?.giveName = nil
+
+        modifiedEntry.tags = [ "hot" ]
+        modifiedEntry.title = nil
+        
+        let patch = try JSONMergePatch.from(original: originalEntry, to: modifiedEntry)
+        
+        print("Patch: \(patch)")
+        
+        let patchedEntry = try patch.apply(to: originalEntry)
+        
+        print(patchedEntry)
+        
+        XCTAssertEqual(patchedEntry, modifiedEntry)
     }
 
     static var allTests = [
@@ -49,4 +68,11 @@ final class JSONUtilTests: XCTestCase {
     ]
 }
 
+extension Sequence where Element == UInt8 {
+    var prettyPrintedJson: String {
+        let obj = try! JSONSerialization.jsonObject(with: Data(self), options: [])
+        let pretty = try! JSONSerialization.data(withJSONObject: obj, options: [ .prettyPrinted ])
+        return String(decoding: pretty, as: UTF8.self)
+    }
+}
 
