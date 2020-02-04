@@ -1,7 +1,10 @@
 import XCTest
 
+import JSONUtilsTests
 import MicroHttpTests
 
 var tests = [XCTestCaseEntry]()
-tests += MicroHttpTests.allTests()
+tests += JSONUtilsTests.__allTests()
+tests += MicroHttpTests.__allTests()
+
 XCTMain(tests)

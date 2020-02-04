@@ -65,4 +65,53 @@ extension JSON {
             return out.copy() as! NSDictionary
         }
     }
+    
+    public func toData(options: JSONSerialization.WritingOptions = []) -> Data {
+        return try! JSONSerialization.data(withJSONObject: self.toNative(), options: options)
+    }
+}
+
+public enum JSONError : Error {
+    case invalidJSONValue(Any)
+}
+
+extension JSON {
+    
+    
+    public init(data: Data) throws {
+        let json = try JSONSerialization.jsonObject(with: data, options: [ .allowFragments ])
+        try self.init(json: json)
+    }
+    
+    init(json: Any) throws {
+        switch json {
+        case nil:
+            self = .null
+        case _ as NSNull:
+            self = .null
+        case let b as Bool:
+            self = .boolean(b)
+        case let n as Int:
+            self = .integer(.init(n))
+        case let n as UInt:
+            self = .integer(.init(n))
+        case let n as Int64:
+            self = .integer(n)
+        case let d as Double:
+            self = .double(d)
+        case let s as String:
+            self = .string(s)
+        case let a as [Any]:
+            self = .array(try a.map({ try JSON(json: $0) }))
+        case let o as [String: Any]:
+            var object = [String: JSON]()
+            for (key, value) in o {
+                object[key] = try JSON(json: value)
+            }
+            self = .object(object)
+        
+        default:
+            throw JSONError.invalidJSONValue(json)
+        }
+    }
 }

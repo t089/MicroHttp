@@ -13,7 +13,8 @@ let package = Package(
         .library(
             name: "Prometheus",
             targets: ["Prometheus"]),
-        .library(name: "JSONUtils", targets: ["JSONUtils"])
+        .library(name: "JSONUtils", targets: ["JSONUtils"]),
+        .executable(name: "micro-example", targets: ["MicroHttpExample"])
     ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.

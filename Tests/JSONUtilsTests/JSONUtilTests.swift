@@ -27,6 +27,7 @@ final class JSONUtilTests: XCTestCase {
     let givenEntry = Entry(phoneNumber: nil, title: "Goodbye!", tags: [ "example", "sample" ], content: "This will be unchanged", author: .init(giveName: "John", familyName: "Doe"))
     
     func testExample() {
+        
         let patch = """
             {
               "title": "Hello!",
@@ -65,6 +66,7 @@ final class JSONUtilTests: XCTestCase {
 
     static var allTests = [
         ("testExample", testExample),
+        ("testMakePatch", testMakePatch)
     ]
 }
 
