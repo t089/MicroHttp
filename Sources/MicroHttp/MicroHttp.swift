@@ -19,7 +19,7 @@ open class MicroApp: Router {
         self.group = group
     }
     
-    open func listen(host: String, port: Int, backlog: CInt = 256, sslHandler: [String: (NIOSSLContext, Router)] = [:]) {
+    open func listen(host: String, port: Int, backlog: CInt = 256, sslHandler: [String: (() throws -> NIOSSLContext, Router)] = [:]) {
 
         
         self.quiesce = ServerQuiescingHelper(group: self.group)
@@ -53,8 +53,12 @@ open class MicroApp: Router {
                             fallthrough
                         }
                         
-                        return channel.pipeline.addHandler(try! NIOSSLServerHandler(context: config.0)).flatMap {
-                            return configureHttp(handler: .init(router: config.1))
+                        do {
+                            return channel.pipeline.addHandler(try NIOSSLServerHandler(context: config.0())).flatMap {
+                                return configureHttp(handler: .init(router: config.1))
+                            }
+                        } catch {
+                            return channel.eventLoop.makeFailedFuture(error)
                         }
                     default:
                         print("No hostname determined use default SSL cert.")
