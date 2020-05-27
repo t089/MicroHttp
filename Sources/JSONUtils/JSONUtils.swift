@@ -92,15 +92,15 @@ fileprivate func mergePatch(target: Any, patch: Any) -> Any {
 fileprivate func jsonEqual(_ lhs: Any, _ rhs: Any) -> Bool {
     switch (lhs, rhs) {
     case (let lhs as NSNumber, let rhs as NSNumber):
-        return lhs.isEqual(to: rhs)
+        return lhs.isEqual(rhs)
     case (let lhs as NSString, let rhs as NSString):
-        return lhs.isEqual(to: rhs)
+        return lhs.isEqual(rhs)
     case ( _ as NSNull,  _ as NSNull):
         return true
     case(let lhs as NSArray, let rhs as NSArray):
-        return lhs.isEqual(to: rhs)
+        return lhs.isEqual(rhs)
     case (let lhs as NSDictionary, let rhs as NSDictionary):
-        return lhs.isEqual(to: rhs)
+        return lhs.isEqual(rhs)
     default:
         return false
     }

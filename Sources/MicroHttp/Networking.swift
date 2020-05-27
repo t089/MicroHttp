@@ -245,7 +245,7 @@ enum SomeMiddleware: MiddlewareProtocol {
     }
 }
 
-open class Router {
+open class Router : MiddlewareProtocol  {
     private var middlewares: [SomeMiddleware] = []
     
     public init() {}
@@ -290,7 +290,7 @@ open class Router {
         self.use(.GET, path, middleware: middleware)
     }
     
-    func handle(error: Error?,
+    open func handle(error: Error?,
                 request: IncommingMessage,
                 response: ServerResponse,
                 context ctx: Context) {
